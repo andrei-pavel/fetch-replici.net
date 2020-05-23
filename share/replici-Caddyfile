@@ -1,0 +1,12 @@
+replici.ddns.net {
+    browse
+
+    redir 301 {
+        if {>X-Forwarded-Proto} is http
+        / https://{host}{uri}
+    }
+
+    root /usr/share/replici.net
+
+    tls {}
+}

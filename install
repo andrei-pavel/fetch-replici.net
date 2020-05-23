@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Copyright (C) 2017-2019 Andrei Pavel, andrei.pavel@cti.pub.ro
+# Licensed under the MIT License
+
+# Header
+ARGUMENTS="\
+  [-p|--prefix] \$prefix        sets the \${pkgdir} used for AUR PKGBUILD
+"
+SCRIPT_PATH="$(dirname "$(readlink -f "${0}")")"
+. "${SCRIPT_PATH}/lib/header"
+
+# Parse arguments.
+pkgdir=
+while (( ${#} > 0 )); do
+  case "${1}" in
+  # [-p|--prefix] \$prefix        sets the \${pkgdir} used for AUR PKGBUILD
+  '-p'|'--prefix') shift && pkgdir="${1}";;
+  *)
+    # Unrecognized argument
+    printf "${RED}ERROR: Unrecognized argument '%s'${RESET}\\n" "${1}" 1>&2; print-usage; exit 1;;
+  esac; shift
+done
+
+#------------------------------------------------------------------------------#
+
+pushd "${SCRIPT_PATH}" > /dev/null
+{
+  for dependency in caddy curl pup wget; do
+    if ! command -v ${dependency} &> /dev/null; then
+      printf 'Please install %s before continuing.\n' "${dependency}" >&2
+      exit 1
+    fi
+  done
+
+  mkdir -p '/etc/caddy'
+  mkdir -p '/etc/fetch-replici.net'
+  mkdir -p '/lib/systemd/system'
+  mkdir -p '/usr/share/html'
+  mkdir -p '/usr/share/replici.net'
+
+  install './fetch-replici.net' "${pkgdir}/usr/local/bin"
+  install './share/fetch-replici.net.service' "${pkgdir}/lib/systemd/system"
+  install './share/caddy.service' "${pkgdir}/lib/systemd/system"
+  if [[ ! -e '/usr/share/html/replici.net' ]]; then
+    ln -s '/usr/share/replici.net' '/usr/share/html/replici.net'
+  fi
+  install -d './lib' "${pkgdir}/usr/local/bin/lib"
+  if [[ ! -e '/etc/caddy/Caddyfile' ]]; then
+    install './share/Caddyfile' '/etc/caddy/Caddyfile'
+  fi
+  install './share/podcasts-Caddyfile' '/etc/fetch-replici.net/Caddyfile'
+  install './share/privacy-policy.html' '/usr/share/html/replici.net/privacy-policy.html'
+  install ./lib/* "${pkgdir}/usr/local/bin/lib"
+
+  if command -v systemctl &> /dev/null; then
+    systemctl daemon-reload
+    systemctl enable fetch-replici.net
+    systemctl restart fetch-replici.net
+    systemctl enable caddy
+    systemctl restart caddy
+  elif command -v service &> /dev/null; then
+    service fetch-replici.net enable
+    service fetch-replici.net restart
+    service caddy enable
+    service caddy restart
+  else
+    printf 'Service not installed because neither systemd nor SysV-Init is not installed.' &> 2
+  fi
+}
+popd 1> /dev/null
