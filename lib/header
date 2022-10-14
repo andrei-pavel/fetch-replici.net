@@ -1,0 +1,121 @@
+#!/bin/bash
+
+# Copyright (C) 2017-2019 Andrei Pavel, andrei.pavel@cti.pub.ro
+# Licensed under the MIT License
+
+# Fail script if any command fails.
+set -euo pipefail
+
+# Print usage function
+function print-usage() {
+  local arguments=
+  if [[ -z "${ARGUMENTS+x}" ]]; then
+    ARGUMENTS="
+"
+  else
+    arguments="{{arguments}}"
+    ARGUMENTS="
+Arguments:
+${ARGUMENTS}"
+  fi
+  printf \
+'Usage: %s {{options}} %s
+Options:
+  [-c|--config $config_yaml]   Reads from a YAML configuration and converts all
+                               key-value pairs with literal values to
+                               environment variables.
+  [-d|--debug]                 Enables debug mode, showing every executed
+                               statement.
+  [-h|--help]                  Prints usage (this text).%s' \
+    "$(basename "${0}")" "${arguments}" "${ARGUMENTS}"
+}
+
+SCRIPT_PATH="$(dirname "$(readlink -f "${0}")")"
+if [[ -z ${BASH_SOURCE+x} ]]; then
+  LIB_PATH="${SCRIPT_PATH}"
+else
+  LIB_PATH="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+fi
+
+# Colors
+RESET='\e[1m\e[0m'
+BLACK='\e[1m\e[30m'
+RED='\e[1m\e[31m'
+GREEN='\e[1m\e[32m'
+YELLOW='\e[1m\e[33m'
+BLUE='\e[1m\e[34m'
+PURPLE='\e[1m\e[35m'
+CYAN='\e[1m\e[36m'
+WHITE='\e[1m\e[37m'
+
+# Parse arguments.
+[[ -z ${_ADDITIONAL_ARGUMENTS+x} ]] && _ADDITIONAL_ARGUMENTS=
+_yaml_files=()
+_i=1
+while (( _i <= ${#} )); do
+  case "${!_i}" in
+  # [-c|--config $config_yaml]   Reads from a YAML configuration and converts all
+  #                              key-value pairs with literal values to
+  #                              environment variables.
+  '-c'|'--config')
+    _ii=$((_i + 1))
+    if (( _ii > ${#} )); then
+      printf "${RED}ERROR: YAML configuration file not provided for -c|--config option${RESET}\\n" >&2
+      exit 1
+    fi
+    yaml=${!_ii}
+    set -- ${*:1:$((_i - 1))} ${*:$((_i + 2))}
+    yaml_files+=("${yaml}")
+    _i=$(( _i - 1))
+    ;;
+  # [-d|--debug]                 Enables debug mode, showing every executed
+  #                              statement.
+  '-d'|'--debug')
+    set -x
+    set -- ${*:1:$((_i - 1))} ${*:$((_i + 1))}
+    _i=$(( _i - 1))
+    _ADDITIONAL_ARGUMENTS+=" -d"
+    ;;
+  # [-h|--help]                  Prints usage (this text).
+  '-h'|'--help')
+    _ADDITIONAL_ARGUMENTS+=" -h"
+    print-usage
+    exit 0
+    ;;
+  esac;
+  _i=$(( _i + 1 ))
+done
+
+# Source guard
+[[ -n "${_LIB_HEADER_SOURCED+x}" ]] && return 0
+export _LIB_HEADER_SOURCED=true
+
+# Source YAML files.
+for i in ${yaml_files[@]}; do
+  . "${LIB_PATH}/yaml-to-env" "${i}"
+done
+
+function additional() {
+  printf '%s' "${_ADDITIONAL_ARGUMENTS}"
+}
+
+# Export variables and functions
+export _ADDITIONAL_ARGUMENTS
+export -f additional
+export -f print-usage
+
+# Get script path and append it to PATH so other scripts are callable.
+export LIB_PATH
+export SCRIPT_PATH
+export PATH="${PATH}:${SCRIPT_PATH}"
+
+# Colors
+export RESET
+export BLACK
+export RED
+export GREEN
+export YELLOW
+export BLUE
+export PURPLE
+export CYAN
+export WHITE

@@ -1,0 +1,164 @@
+#!/bin/bash
+
+# Copyright (C) 2017-2019 Andrei Pavel, andrei.pavel@cti.pub.ro
+# Licensed under the MIT License
+
+# Header
+ARGUMENTS="\
+  [-a|--audio]                 download audio files instead of creating HTML redirects to replici.net's storage
+"
+SCRIPT_PATH="$(dirname "$(readlink -f "${0}")")"
+. "${SCRIPT_PATH}/lib/header"
+. "${SCRIPT_PATH}/lib/spinner"
+
+# Parse arguments.
+while (( ${#} > 0 )); do
+  case "${1}" in
+  '-a' | '--audio') audio=true ;;
+  # Unrecognized argument
+  *) printf "${RED}ERROR: Unrecognized argument '%s'${RESET}\\n" "${1}" 1>&2; print-usage; exit 1 ;;
+  esac; shift
+done
+
+# Default values
+[[ -z "${audio+x}" ]] && audio=false
+
+#------------------------------------------------------------------------------#
+
+function archive() {
+  cp -p "${auxiliary}" "${directory}/${filename}"
+}
+
+function download() {
+  if wget -O "${auxiliary}" "${url}" &> /dev/null; then
+    archive
+  else
+    printf 'Could not download audio file %s' "${url}" >&2
+  fi
+}
+
+function redirect_html() {
+  printf "\
+<html><head><meta http-equiv=\"refresh\" content=\"0;url=%s\" /><title>Redirecting...</title></head><body>Redirecting.... Click <a href=\"%s\">here</a> to hurry things up.</body></html>
+" "${url}" "${url}" > "${auxiliary}"
+  archive
+}
+
+function filename() {
+  if ${audio}; then
+    filename="$(printf '%s' "${1}" | xargs).mp3"
+  else
+    filename="$(printf '%s' "${1}" | xargs)"
+  fi
+}
+
+function retrieve() {
+  if ${audio}; then
+    download
+  else
+    redirect_html
+  fi
+}
+
+function fetch() {
+  local name="${1}"
+  local url="${2}"
+
+  directory="/usr/share/replici.net"
+  auxiliary="/tmp/${name}"
+
+  if [[ ! -e "${directory}" ]]; then
+    mkdir -p "${directory}"
+  fi
+
+  start-spinner "${name}"
+  filename ${name}
+  if [[ ! -f "${directory}/${filename}" ]]; then
+    retrieve
+  fi
+  stop-spinner 0
+
+  rm -f "${auxiliary}"
+}
+
+function my-curl() {
+  printf 'curl -L -s %s\n' "${@}"
+  CONTENT=$(curl -L -s "${@}")
+}
+
+function get-categories() {
+  raw_categories=$(curl -L -s 'https://www.replici.net' | pup 'div ul li a')
+  categories=$(pup 'a text{}' <<<"${raw_categories}")
+  suffixes=$(pup 'a attr{href}' <<<"${raw_categories}")
+  length=$(grep -c '<a' <<<"${raw_categories}")
+
+  SAVEIFS="${IFS}"
+  IFS=$'\n'
+  categories=( ${categories[@]} )
+  suffixes=( ${suffixes[@]} )
+  IFS="${SAVEIFS}"
+}
+
+get-categories
+# 0: Acasă (ultimele replici) - https://replici.net/
+# 1: Citat aleatoriu - /aleatorii.php
+# 2: Actori - /actori
+# 3: Desene animate - /replici-din-desene-animate/
+# 4: Diferite teme - /diverse-teme
+# 5: Comedii - /replici-din-filme-de-comedie/
+# 6: Filme celebre - /replici-din-filme-celebre/
+# 7: Filme istorice - /replici-din-filme-istorice/
+# 8: Filme vechi - /citate-audio-din-filme-vechi/
+# 9: Muzica - /citate-din-muzica/
+# 10: Teatru radiofonic - /replici-din-teatru-radiofonic/
+# 11: Contact - /contact
+for i in $(seq 2 $((length - 1))); do
+  category=$(xargs <<<"${categories[${i}]}")
+  suffix=$(xargs <<<"${suffixes[${i}]}")
+  if [[ "${category}" = 'Actori' ]]; then
+    my-curl "https://www.replici.net${suffix}"
+    raw_actors=$(pup 'td a' <<<"${CONTENT}" | sed 's/ .tefan/ Stefan/g')
+    actors=$(pup 'a h3' <<<"${raw_actors}" | sort -uV)
+    actor_suffixes=$(pup 'a attr{href}' <<<"${raw_actors}" | sort -uV)
+    actor_length=$(grep -c 'title=' <<<"${raw_actors}")
+
+    SAVEIFS="${IFS}"
+    IFS=$'\n'
+    actors=( ${actors} )
+    actor_suffixes=( ${actor_suffixes} )
+    IFS="${SAVEIFS}"
+
+    for i in $(seq 0 $((actor_length - 1))); do
+      j=1
+      while true; do
+        my-curl "https://replici.net${actor_suffixes[${i}]}/pagina-${j}"
+        page="${CONTENT}"
+        error=$(pup 'body div div div div attr{id}' <<<"${page}" | grep -c error) || true
+        if [[ ${error} != 0 ]]; then
+          break
+        fi
+
+        narrowed_page=$(pup 'td div div' <<<"${page}")
+        audio_titles=$(pup 'div h2 a text{}' <<<"${narrowed_page}" | grep -Ev '\([0-9]*\)' | sed '/^\s*$/d')
+        audio_suffixes=$(pup 'div audio attr{src}' <<<"${narrowed_page}")
+
+        SAVEIFS="${IFS}"
+        IFS=$'\n'
+        audio_titles=( ${audio_titles} )
+        audio_suffixes=( ${audio_suffixes} )
+        IFS="${SAVEIFS}"
+        audio_length=${#audio_suffixes[@]}
+
+        for k in $(seq 0 $((audio_length - 1))); do
+          # title=$(xargs <<<"${audio_titles[${k}]}")
+          suffix=${audio_suffixes[${k}]}
+          title=$(sed 's#.*/##g' <<<"${suffix}")
+          title=$(sed 's#.mp3$##g' <<<"${title}")
+          fetch "${title}" "https://replici.net${suffix}"
+        done
+
+        j=$((j + 1))
+      done
+    done
+  fi
+done

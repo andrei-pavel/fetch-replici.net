@@ -1,0 +1,179 @@
+#!/bin/bash
+
+# Copyright (C) 2017-2019 Andrei Pavel, andrei.pavel@cti.pub.ro
+# Licensed under the MIT License
+#
+# Warning! Nested spinners are not supported.
+
+# Source guard
+[[ -n "${_LIB_SPINNER_SOURCED+x}" ]] && return 0
+export _LIB_SPINNER_SOURCED=true
+
+. "${LIB_PATH}/traps"
+
+function _spinner_cycle () {
+  _cycle=(
+    '[●   ]'
+    '[ ●  ]'
+    '[  ● ]'
+    '[   ●]'
+    '[  ● ]'
+    '[ ●  ]'
+  )
+  if [[ -z "${1+x}" ]]; then
+    printf '%d' "${#_cycle[@]}"
+  else
+    printf '%s' "${_cycle[${1}]}"
+  fi
+}
+export -f _spinner_cycle
+export _spinner_period='0.15s'
+
+if command -v tput &> /dev/null; then
+  if tput cvvis &> /dev/null; then
+    function _tput() {
+      tput "${@}"
+    }
+  elif tput -T 'xterm' cvvis &> /dev/null; then
+    function _tput() {
+      tput -T 'xterm' "${@}"
+    }
+  else
+    function _tput() {
+      :
+    }
+  fi
+else
+  function _tput() {
+    :
+  }
+fi
+export -f _tput
+
+function _display_message() {
+  local mode=${1-}
+  local status=${2-}
+  if [[ "${mode}" = 'spinning' ]]; then
+    status="$(_spinner_cycle $(( _s % $(_spinner_cycle) )) )"
+    (( ++_s ))
+  fi
+  if [[ "${mode}" != 'first' ]]; then
+    printf '\e[1A'
+  fi
+  printf "\\r%s%$(($(_tput cols)-${#_message}-8))s${status}\\n" "${_message}"
+}
+export -f _display_message
+
+function _spinner {
+  case ${1-} in
+    start)
+      _tput civis
+      export _s=0
+      while true; do
+        _display_message 'spinning'
+        sleep ${_spinner_period}
+      done
+      ;;
+
+    stop)
+      [[ -z "${_spinner_pid+x}" ]] && return 1
+      kill "${_spinner_pid}" > /dev/null 2>&1
+      local status
+      if (( ${2-0} == 0 )); then
+        status="${GREEN}DONE${RESET}"
+      else
+        status="${GREEN}FAIL${RESET}"
+      fi
+      _display_message 'status' "[${status}]"
+      ;;
+
+    *)
+      printf 'ERROR: invalid argument, try {start/stop}' >&2
+      exit 2
+      ;;
+  esac
+}
+export -f _spinner
+
+function are-spinners-enabled() {
+  [[ -z "${SPINNERS_ENABLED+x}" || "${SPINNERS_ENABLED}" = true ]]
+}
+export -f are-spinners-enabled
+
+function is-verbose-enabled() {
+  [[ -n "${SPINNERS_VERBOSE+x}" && "${SPINNERS_VERBOSE}" = true ]]
+}
+export -f is-verbose-enabled
+
+function start-spinner() {
+  if [[ "${-}" = *x* || -n "${_spinner_pid+x}" ]] || ! are-spinners-enabled; then
+    return
+  fi
+  export _message="${1-}"
+  _display_message 'first'
+  _spinner 'start' &
+  _buffer="$(mktemp)"
+  export _buffer
+  if [[ -z "${SPINNERS_OUTPUT+x}" || ${SPINNERS_OUTPUT} = 'full-output' ]]; then
+    exec 3>&1 1>"${_buffer}" 2>&1
+  elif [[ ${SPINNERS_OUTPUT} = 'stdout-only' ]]; then
+    exec 3>&1 1>"${_buffer}" 2>/dev/null
+  elif [[ ${SPINNERS_OUTPUT} = 'stderr-only' ]]; then
+    exec 3>&1 1>/dev/null 2>"${_buffer}"
+  elif [[ ${SPINNERS_OUTPUT} = 'no-output' ]]; then
+    exec 3>&1 1>/dev/null 2>/dev/null
+  fi
+  export _spinner_pid="${!}"
+  disown
+}
+export -f start-spinner
+
+function stop-spinner() {
+  _tput cvvis
+  if [[ "${-}" = *x* || -z "${_spinner_pid+x}" ]] || ! are-spinners-enabled; then
+    return
+  fi
+  exec 1>&3
+  local exit_code="${1-0}"
+  _spinner 'stop' "${exit_code}"
+  unset _spinner_pid
+  if (( exit_code != 0 )) || is-verbose-enabled; then
+    cat "${_buffer}"
+  fi
+  rm "${_buffer}"
+}
+export -f stop-spinner
+
+function disable-spinners() {
+  traps "${the_trap}" --return-code-only
+  export SPINNERS_ENABLED=false
+}
+export -f disable-spinners
+
+function disable-verbose() {
+  export SPINNERS_VERBOSE=false
+}
+export -f disable-verbose
+
+function configure-spinner-output() {
+  export SPINNERS_OUTPUT=${1-}
+  if [[ ${SPINNERS_OUTPUT} != 'full-output' &&
+        ${SPINNERS_OUTPUT} != 'stdout-only' &&
+        ${SPINNERS_OUTPUT} != 'stderr-only' &&
+        ${SPINNERS_OUTPUT} != 'no-output' ]]; then
+    printf 'wrong spinner output %s\n' "${mode}" 2>/dev/null
+    return 1
+  fi
+}
+export -f configure-spinner-output
+
+function enable-spinners() {
+  traps "${the_trap}"
+  export SPINNERS_ENABLED=true
+}
+export -f enable-spinners
+
+function enable-verbose() {
+  export SPINNERS_VERBOSE=true
+}
+export -f enable-verbose

@@ -1,0 +1,14 @@
+[Unit]
+Description=fetch-replici.net
+After=multi-user.target
+
+[Service]
+Restart=always
+RestartSec=3600
+Type=idle
+User=root
+ExecStart=/usr/local/bin/fetch-replici.net
+
+[Install]
+WantedBy=multi-user.target
+Alias=fetch-replici.net.service
